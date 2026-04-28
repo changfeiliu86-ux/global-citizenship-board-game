@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: global-citizenship-board-game
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    autoDeploy: true
