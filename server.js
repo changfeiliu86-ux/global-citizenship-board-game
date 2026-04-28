@@ -13,6 +13,7 @@ const DICE_STEP_ANIMATION_MS = 320;
 const SDG_TILE_COUNT = 8;
 const LANDING_EFFECT_DELAY_MS = 900;
 const GAME_DURATION_SECONDS = 30 * 60;
+const RECONNECT_GRACE_MS = 10 * 60 * 1000;
 
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -453,6 +454,7 @@ let pendingVirtue = null;
 let gameClockStarted = false;
 let gameClockRemaining = GAME_DURATION_SECONDS;
 let gameClockInterval = null;
+const reconnectCleanupTimers = new Map();
 
 let timerInterval = null;
 
@@ -695,11 +697,38 @@ function chooseTextArgue(player) {
 }
 
 io.on('connection', (socket) => {
-    socket.on('joinGame', (name) => {
+    socket.on('joinGame', (payload) => {
+        const providedName = typeof payload === 'string' ? payload : payload?.name;
+        const reconnectToken = typeof payload === 'object' ? payload?.playerToken : null;
+        const safeName = (providedName || '').trim() || `Player ${gameState.players.length + 1}`;
+
+        if (reconnectToken) {
+            const existing = gameState.players.find(p => p.reconnectToken === reconnectToken);
+            if (existing) {
+                if (!existing.disconnected) {
+                    socket.emit('error', 'This player is already connected on another tab/device.');
+                    return;
+                }
+                const cleanupTimer = reconnectCleanupTimers.get(reconnectToken);
+                if (cleanupTimer) {
+                    clearTimeout(cleanupTimer);
+                    reconnectCleanupTimers.delete(reconnectToken);
+                }
+                existing.id = socket.id;
+                existing.name = safeName || existing.name;
+                existing.disconnected = false;
+                existing.disconnectedAt = null;
+                socket.emit('roleAssigned', { role: 'player' });
+                io.emit('log', `🔁 ${existing.name} rejoined and resumed their seat.`);
+                io.emit('stateUpdate', gameState);
+                return;
+            }
+        }
+
         if (gameState.players.length >= 4) {
             const spectator = {
                 id: socket.id,
-                name: name || `Spectator ${gameState.spectators.length + 1}`
+                name: safeName || `Spectator ${gameState.spectators.length + 1}`
             };
             gameState.spectators.push(spectator);
             io.emit('log', `👀 ${spectator.name} joined as spectator.`);
@@ -710,7 +739,7 @@ io.on('connection', (socket) => {
 
         const player = {
             id: socket.id,
-            name: name || `Player ${gameState.players.length + 1}`,
+            name: safeName,
             pos: 0, heart: 1, intellect: 1, will: 1, score: 0,
             color: `hsl(${gameState.players.length * 90}, 70%, 50%)`,
             sdgsClaimed: [],
@@ -719,7 +748,10 @@ io.on('connection', (socket) => {
             cannotDrawNextTurn: false,
             rollTwiceLower: false,
             isReady: false,
-            micEnabled: false
+            micEnabled: false,
+            reconnectToken: reconnectToken || null,
+            disconnected: false,
+            disconnectedAt: null
         };
         gameState.players.push(player);
         socket.emit('roleAssigned', { role: 'player' });
@@ -1310,9 +1342,28 @@ io.on('connection', (socket) => {
     });
 
     socket.on('disconnect', () => {
-        gameState.players = gameState.players.filter(p => p.id !== socket.id);
+        const player = gameState.players.find(p => p.id === socket.id);
+        if (player) {
+            player.disconnected = true;
+            player.disconnectedAt = Date.now();
+            io.emit('log', `⚠️ ${player.name} disconnected. Seat reserved for ${Math.floor(RECONNECT_GRACE_MS / 60000)} minutes.`);
+
+            if (player.reconnectToken) {
+                const oldTimer = reconnectCleanupTimers.get(player.reconnectToken);
+                if (oldTimer) clearTimeout(oldTimer);
+                const timer = setTimeout(() => {
+                    reconnectCleanupTimers.delete(player.reconnectToken);
+                    gameState.players = gameState.players.filter(p => p.reconnectToken !== player.reconnectToken);
+                    io.emit('log', `⌛ ${player.name}'s reserved seat expired.`);
+                    io.emit('stateUpdate', gameState);
+                }, RECONNECT_GRACE_MS);
+                reconnectCleanupTimers.set(player.reconnectToken, timer);
+            } else {
+                gameState.players = gameState.players.filter(p => p.id !== socket.id);
+            }
+        }
+
         gameState.spectators = gameState.spectators.filter(s => s.id !== socket.id);
-        io.emit('log', `A player disconnected`);
         io.emit('stateUpdate', gameState);
     });
 });

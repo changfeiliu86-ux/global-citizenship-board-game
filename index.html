@@ -505,8 +505,16 @@
     socket.on('roleAssigned', ({ role }) => {
         myRole = role || 'player';
     });
-    const name = prompt("Enter your player name:") || "Mystery Player";
-    socket.emit('joinGame', name);
+    const savedName = localStorage.getItem('gcbg_name') || '';
+    const name = savedName || prompt("Enter your player name:") || "Mystery Player";
+    localStorage.setItem('gcbg_name', name);
+    let playerToken = localStorage.getItem('gcbg_player_token');
+    if (!playerToken) {
+        if (window.crypto?.randomUUID) playerToken = window.crypto.randomUUID();
+        else playerToken = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        localStorage.setItem('gcbg_player_token', playerToken);
+    }
+    socket.emit('joinGame', { name, playerToken });
 
     // 生成 8x8 螺旋坐标（从外圈左上方开始，顺时针向内）
     function generateSpiralCoords(rows, cols) {
@@ -895,13 +903,14 @@
         const mePlayer = state.players.find(p => p.id === myId);
         const currentPlayer = state.players[state.currentPlayerIdx];
         if (!currentPlayer || state.phase === 'WAITING') {
-            document.getElementById('current-phase').innerText = 'Waiting lobby: 4 ready players required / 等待4位玩家准备';
+            const readyCount = state.players.filter(p => p.isReady).length;
+            document.getElementById('current-phase').innerText = `Lobby / 大厅：${readyCount}/4 ready`;
             document.getElementById('player-list').innerHTML = state.players.map(p => `
                 <div class="inactive-p">
                     <span style="color:${p.color}">●</span> <b>${p.name}</b> 🏆 ${p.score}
                     <div>H: ${p.heart} | I: ${p.intellect} | W: ${p.will}</div>
                     <div style="font-size:11px; color:${p.isReady ? '#2e7d32' : '#9e9e9e'};">
-                        ${p.isReady ? '✅ Ready' : '⏳ Not ready'} | Mic: ${p.micEnabled ? 'On' : 'Off'}
+                        ${p.isReady ? '✅ Ready' : '⏳ Not ready'} | Mic: ${p.micEnabled ? 'On' : 'Off'} ${p.disconnected ? '| 🔌 Offline' : ''}
                     </div>
                 </div>`).join('');
             if (state.spectators?.length) {
@@ -914,9 +923,9 @@
             }
             const ctrlDiv = document.getElementById('dynamic-controls');
             if (myRole === 'spectator' || !mePlayer) {
-                ctrlDiv.innerHTML = `<h3>👀 Spectator mode / 观众模式</h3><p>Watch the game once 4 players are ready.</p>`;
+                ctrlDiv.innerHTML = `<h3>👀 Spectator mode / 观众模式</h3><p>Waiting for 4 players to be ready / 等待4位玩家准备完成</p>`;
             } else if (mePlayer.isReady) {
-                ctrlDiv.innerHTML = `<h3>✅ You are ready</h3><p>Waiting for other players to click ready.</p>`;
+                ctrlDiv.innerHTML = `<h3>✅ Ready</h3><p>Waiting for other players... / 等待其他玩家准备</p>`;
             } else {
                 ctrlDiv.innerHTML = `
                     <h3>🎤 Pre-game setup / 开始前设置</h3>
@@ -928,6 +937,8 @@
             }
             return;
         }
+        // Game has started: ensure lobby-ready hints are fully replaced.
+        document.getElementById('current-phase').innerText = '';
         const isMyTurn = (myId === currentPlayer.id);
         let isMyDiscardTurn = false;
         if (state.phase === 'DISCARDING' && state.currentAction?.type === 'DISCARD') {
@@ -956,6 +967,7 @@
             <div class="${p.id === currentPlayer.id ? 'active-p' : 'inactive-p'}">
                 <div><span style="color:${p.color}">●</span> <b>${p.name}</b> 🏆 ${p.score}</div>
                 <div>H: ${p.heart} | I: ${p.intellect} | W: ${p.will}</div>
+                ${p.disconnected ? '<div style="font-size:10px;color:#c62828;">🔌 Offline (seat reserved)</div>' : ''}
                 ${p.sdgsClaimed.length ? `<div style="font-size:10px;">SDGs: ${p.sdgsClaimed.join(',')}</div>` : ''}
             </div>`).join('');
 
