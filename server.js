@@ -10,7 +10,7 @@ const io = new Server(server);
 const PORT = 11466;
 const DICE_BASE_ANIMATION_MS = 800;
 const DICE_STEP_ANIMATION_MS = 320;
-const SDG_TILE_COUNT = 8;
+const SDG_TILE_COUNT = 14;
 const LANDING_EFFECT_DELAY_MS = 900;
 const GAME_DURATION_SECONDS = 30 * 60;
 const RECONNECT_GRACE_MS = 10 * 60 * 1000;
@@ -472,11 +472,12 @@ function removeClaimedSDG(player, state) {
 function initBoard() {
     let pool = [];
     for (let i = 0; i < SDG_TILE_COUNT; i++) {
-        const sdgNums = SDG_GROUPS[i].join(', ');
-        const sdgHint = SDG_GROUPS[i].map(id => `${id}:${SDG_SHORT_LABELS[id] || SDG_NAMES[id]}`).join(' | ');
+        const group = SDG_GROUPS[i % SDG_GROUPS.length];
+        const sdgNums = group.join(', ');
+        const sdgHint = group.map(id => `${id}:${SDG_SHORT_LABELS[id] || SDG_NAMES[id]}`).join(' | ');
         pool.push({
             type: 'SDG',
-            sdgs: SDG_GROUPS[i],
+            sdgs: group,
             label: '🎯 SDG Challenge',
             detail: sdgNums,
             detailDesc: sdgHint
@@ -486,9 +487,9 @@ function initBoard() {
     for (let i = 0; i < 6; i++) pool.push({ type: 'SHOCK', label: '⚠️ Global Shock / 全球冲击' });
     for (let i = 0; i < 6; i++) pool.push({ type: 'WELFARE', label: '🌟 Global Welfare / 全球福祉' });   // 9 → 6
     for (let i = 0; i < 7; i++) pool.push({ type: 'VICE', label: '😈 Vice / 恶习' });                  // more vice tiles
-    for (let i = 0; i < 11; i++) pool.push({ type: 'RESOURCE_H', label: '❤ Heart +1' });       // 12 → 11
-    for (let i = 0; i < 11; i++) pool.push({ type: 'RESOURCE_I', label: '🧠 Intellect +1' });  // 12 → 11
-    for (let i = 0; i < 11; i++) pool.push({ type: 'RESOURCE_W', label: '⚡ Will +1' });
+    for (let i = 0; i < 9; i++) pool.push({ type: 'RESOURCE_H', label: '❤ Heart +1' });
+    for (let i = 0; i < 9; i++) pool.push({ type: 'RESOURCE_I', label: '🧠 Intellect +1' });
+    for (let i = 0; i < 9; i++) pool.push({ type: 'RESOURCE_W', label: '⚡ Will +1' });
 
     function shuffleArray(arr) {
         const a = [...arr];
