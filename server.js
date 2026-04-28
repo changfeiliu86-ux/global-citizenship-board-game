@@ -436,6 +436,7 @@ const VICE_CARDS = [
 
 let gameState = {
     players: [],
+    spectators: [],
     currentPlayerIdx: 0,
     claimedSDGs: [],
     claimedBy: {},
@@ -695,7 +696,17 @@ function chooseTextArgue(player) {
 
 io.on('connection', (socket) => {
     socket.on('joinGame', (name) => {
-        if (gameState.players.length >= 4) return socket.emit('error', 'Game is full');
+        if (gameState.players.length >= 4) {
+            const spectator = {
+                id: socket.id,
+                name: name || `Spectator ${gameState.spectators.length + 1}`
+            };
+            gameState.spectators.push(spectator);
+            io.emit('log', `👀 ${spectator.name} joined as spectator.`);
+            socket.emit('roleAssigned', { role: 'spectator' });
+            io.emit('stateUpdate', gameState);
+            return;
+        }
 
         const player = {
             id: socket.id,
@@ -705,15 +716,30 @@ io.on('connection', (socket) => {
             sdgsClaimed: [],
             skipNextTurn: false,
             cannotClaimNextTurn: false,
-            cannotDrawNextTurn: false,      // NEW
-            rollTwiceLower: false            // NEW (for Impatience)
+            cannotDrawNextTurn: false,
+            rollTwiceLower: false,
+            isReady: false,
+            micEnabled: false
         };
         gameState.players.push(player);
-        io.emit('log', `👋 ${player.name} joined the game`);
+        socket.emit('roleAssigned', { role: 'player' });
+        io.emit('log', `👋 ${player.name} joined as player.`);
+        io.emit('stateUpdate', gameState);
+    });
 
-        if (gameState.players.length >= 1 && gameState.phase === 'WAITING') {
+    socket.on('setReady', ({ micEnabled } = {}) => {
+        if (gameState.phase !== 'WAITING') return;
+        const player = gameState.players.find(p => p.id === socket.id);
+        if (!player) return;
+        player.isReady = true;
+        player.micEnabled = !!micEnabled;
+        io.emit('log', `✅ ${player.name} is ready (${player.micEnabled ? 'mic on' : 'mic off'}).`);
+
+        if (gameState.players.length === 4 && gameState.players.every(p => p.isReady)) {
             gameState.phase = 'ROLLING';
+            gameState.currentPlayerIdx = gameState.players.length - 1;
             startGameClockIfNeeded();
+            io.emit('log', '🚀 All 4 players are ready. Game starts now!');
         }
         io.emit('stateUpdate', gameState);
     });
@@ -1115,7 +1141,10 @@ io.on('connection', (socket) => {
 
     socket.on('skipPhase', () => {
         const player = gameState.players[gameState.currentPlayerIdx];
-        if (socket.id !== player.id) return;
+        const rebutter = gameState.players.find(p => p.id === gameState.currentAction?.rebutterId);
+        const isCurrentPlayer = player && socket.id === player.id;
+        const isRebutter = rebutter && socket.id === rebutter.id;
+        if (!isCurrentPlayer && !isRebutter) return;
 
         if (gameState.phase === 'THINKING') {
             stopTimer();
@@ -1141,13 +1170,11 @@ io.on('connection', (socket) => {
             io.emit('log', `⏭️ ${player.name} skipped argument presentation.`);
             finishArgument(player, "[Skipped argument]");
         } else if (gameState.phase === 'COUNTER_ARGUE_CHOICE') {
-            const rebutter = gameState.players.find(p => p.id === gameState.currentAction?.rebutterId);
             if (!rebutter || socket.id !== rebutter.id) return;
             stopTimer();
             io.emit('log', `⏭️ ${rebutter.name} skipped choosing method, defaulting to text counter-argument.`);
             startArguePhase(rebutter, 'REBUTTER', 'text');
         } else if (gameState.phase === 'COUNTER_ARGUING') {
-            const rebutter = gameState.players.find(p => p.id === gameState.currentAction?.rebutterId);
             if (!rebutter || socket.id !== rebutter.id) return;
             stopTimer();
             io.emit('log', `⏭️ ${rebutter.name} skipped counter-argument.`);
@@ -1255,6 +1282,7 @@ io.on('connection', (socket) => {
         stopGameClock();
         gameState = {
             players: [],
+            spectators: [],
             currentPlayerIdx: 0,
             claimedSDGs: [],
             claimedBy: {},
@@ -1283,6 +1311,7 @@ io.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
         gameState.players = gameState.players.filter(p => p.id !== socket.id);
+        gameState.spectators = gameState.spectators.filter(s => s.id !== socket.id);
         io.emit('log', `A player disconnected`);
         io.emit('stateUpdate', gameState);
     });
